@@ -35,8 +35,11 @@ public interface FileTreeWatch extends Closeable {
     void close();
 
     static FileTreeWatch run(Path path, Event.Listener listener) {
-        if (System.getProperty("os.name").toLowerCase().startsWith("windows")) {
+        var os = System.getProperty("os.name", "other").toLowerCase();
+        if (os.startsWith("windows")) {
             return spawn(() -> FlatWatch.run(path, true, listener));
+        } else if (os.startsWith("mac")) {
+            return spawn(() -> PollingWatch.run(path, Duration.ofSeconds(2), listener));
         } else {
             return spawn(() -> RecursiveWatch.run(path, listener));
         }

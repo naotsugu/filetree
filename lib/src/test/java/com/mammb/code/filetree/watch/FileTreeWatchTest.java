@@ -35,13 +35,11 @@ class FileTreeWatchTest {
         try (var watch = FileTreeWatch.sync(source, target, "**/*.java", "**/*.html")) {
             Path path = source.resolve("l1/l2");
             Files.createDirectories(path);
-            Thread.sleep(Duration.ofMillis(1500));
+            Thread.sleep(Duration.ofMillis(2500));
             Files.write(path.resolve("foo.java"), "some content".getBytes());
-            Thread.sleep(Duration.ofMillis(1500));
             Files.write(path.resolve("bar.html"), "some content".getBytes());
-            Thread.sleep(Duration.ofMillis(1500));
             Files.write(path.resolve("baz.xml"), "some content".getBytes());
-            Thread.sleep(Duration.ofMillis(1500));
+            Thread.sleep(Duration.ofMillis(2500));
             try (Stream<Path> stream = Files.list(target.resolve("l1/l2"))) {
                 var ls = stream.sorted().toList();
                 assertEquals(2, ls.size());

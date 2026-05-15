@@ -19,7 +19,6 @@ import com.mammb.code.filetree.watch.Event;
 
 import java.io.IOException;
 import java.nio.file.FileSystems;
-import java.nio.file.FileVisitOption;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -29,11 +28,14 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static java.lang.System.Logger.Level.*;
 import static java.util.function.Predicate.not;
@@ -47,147 +49,191 @@ public class PollingWatch {
     private static final System.Logger log = System.getLogger(PollingWatch.class.getName());
 
     private final Path path;
-
     private final List<PathMatcher> pathMatchers;
-
-    private Map<Path, FileEntry> baseLine;
+    private Map<Path, CacheEntry> entries;
+    private long tickCount = -1;
 
     PollingWatch(Path path, List<PathMatcher> pathMatchers) {
-        this.path = Objects.requireNonNull(path);
+        this.path = path.toAbsolutePath().normalize();
         this.pathMatchers = (pathMatchers == null || pathMatchers.isEmpty())
-                ? List.of(FileSystems.getDefault().getPathMatcher("glob:**"))
-                : pathMatchers;
-    }
-
-    void reset() {
-        baseLine = list(path);
-    }
-
-    public static void run(Path watchPath, Event.Listener listener) {
-        run(watchPath, Duration.ofSeconds(10), listener, "");
+            ? List.of(FileSystems.getDefault().getPathMatcher("glob:**"))
+            : pathMatchers;
     }
 
     public static void run(Path watchPath, Duration interval, Event.Listener listener, String... globs) {
-        run(watchPath, interval, listener,
-                Arrays.stream(globs)
-                        .filter(not(String::isBlank))
-                        .map(str -> str.startsWith("glob:") ? str : "glob:"+ str)
-                        .map(str -> FileSystems.getDefault().getPathMatcher(str))
-                        .toArray(PathMatcher[]::new));
+        run(watchPath, interval, listener, Arrays.stream(globs)
+                .filter(not(String::isBlank))
+                .map(str -> str.startsWith("glob:") ? str : "glob:"+ str)
+                .map(str -> FileSystems.getDefault().getPathMatcher(str))
+                .toList());
     }
 
-    public static void run(Path watchPath, Duration interval, Event.Listener listener, PathMatcher... pathMatchers) {
+    public static void run(Path watchPath, Duration interval, Event.Listener listener, List<PathMatcher> pathMatchers) {
 
         Objects.requireNonNull(watchPath);
         Objects.requireNonNull(interval);
         Objects.requireNonNull(pathMatchers);
         Objects.requireNonNull(listener);
 
-        final var watch = new PollingWatch(watchPath, List.of(pathMatchers));
         log.log(INFO, "watchPath : {0}", watchPath);
 
-        while (!Thread.currentThread().isInterrupted()) {
-            try {
-                Thread.sleep(interval);
-                watch.execute().forEach(listener);
-            } catch (final InterruptedException ignored) {
-                log.log(INFO, "interrupted");
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-        log.log(INFO, "closed watchService");
+        // create the periodic task to poll directories
+        try (var scheduledExecutor = Executors.newSingleThreadScheduledExecutor()) {
 
+            final var watch = new PollingWatch(watchPath, pathMatchers);
+            final Runnable thunk = () -> watch.poll().forEach(listener);
+            scheduledExecutor.scheduleAtFixedRate(thunk, 0, interval.getSeconds(), TimeUnit.SECONDS).get();
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.log(INFO, "interrupted");
+        } catch (ExecutionException e) {
+            throw new RuntimeException(e);
+        }
     }
 
-    private List<Event> execute() {
-
-        if (baseLine == null || baseLine.isEmpty()) {
-            reset();
-            return List.of();
-        }
-
-        log.log(INFO, "start polling check... [{0}]", baseLine.size());
-
-        final List<Event> events = new ArrayList<>();
-        final Map<Path, FileEntry> currMap = list(path);
-        final Map<Path, FileEntry> prevMap = baseLine;
-        baseLine = null;
-
-        for (Map.Entry<Path, FileEntry> currEntry : currMap.entrySet()) {
-            final Path path = currEntry.getKey();
-            final FileEntry curr = currEntry.getValue();
-            final FileEntry prev = prevMap.remove(path);
-
-            if (prev == null) {
-                // new file
-                log.log(DEBUG, "CREATE : {0}", curr.path());
-                events.add(curr.attr().isDirectory()
-                        ? new Event.DirectoryCreate(curr.path())
-                        : new Event.FileCreate(curr.path()));
-            } else {
-                // existing file, check for changes
-                if (prev.attr().isDirectory() && curr.attr().isDirectory()) {
-                    // same directory, do nothing
-                } else if (prev.attr().isDirectory()) {
-                    log.log(DEBUG, "DELETE : {0}", prev.path());
-                    log.log(DEBUG, "CREATE : {0}", curr.path());
-                    events.add(new Event.DirectoryDelete(prev.path()));
-                    events.add(new Event.FileCreate(curr.path()));
-                } else if (curr.attr().isDirectory()) {
-                    log.log(DEBUG, "DELETE : {0}", prev.path());
-                    log.log(DEBUG, "CREATE : {0}", curr.path());
-                    events.add(new Event.FileDelete(prev.path()));
-                    events.add(new Event.DirectoryCreate(curr.path()));
-                } else if (Objects.equals(prev.attr().lastModifiedTime(), curr.attr().lastModifiedTime()) &&
-                           Objects.equals(prev.attr().size(), curr.attr().size())) {
-                    // same file, do nothing
-                } else {
-                    log.log(DEBUG, "MODIFY : {0}", prev.path());
-                    events.add(new Event.FileChange(prev.path()));
-                }
-            }
-        }
-
-        // remaining entries in prevMap are deleted files
-        for (FileEntry prev : prevMap.values()) {
-            log.log(DEBUG, "DELETE : {0}", prev.path());
-            events.add(prev.attr().isDirectory()
-                    ? new Event.DirectoryDelete(prev.path())
-                    : new Event.FileDelete(prev.path()));
-        }
-
-        log.log(DEBUG, "events: {0}", events.size());
-        baseLine = currMap;
-        return events;
+    synchronized void reset() {
+        this.entries = null;
+        this.tickCount = -1;
     }
 
-    private Map<Path, FileEntry> list(Path path) {
-        final Map<Path, FileEntry> entries = new HashMap<>();
+    synchronized List<Event> poll() {
         try {
-            Files.walkFileTree(path, EnumSet.of(FileVisitOption.FOLLOW_LINKS), Integer.MAX_VALUE, new SimpleFileVisitor<>() {
+
+            if (tickCount < 0) {
+                entries = buildCacheEntries(tickCount = 0);
+                return List.of();
+            }
+
+            tickCount++; // update tick
+            final List<Event> events = new ArrayList<>();
+
+            // iterate over all entries in directory
+            Files.walkFileTree(path, new SimpleFileVisitor<>() {
                 @Override
-                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attr) {
                     if (pathMatchers.stream().anyMatch(m -> m.matches(dir))) {
-                        entries.put(dir, new FileEntry(dir, attrs));
+                        CacheEntry e = entries.get(dir);
+                        if (e == null) {
+                            // new directory found
+                            log.log(DEBUG, "CREATE : {0}", dir);
+                            entries.put(dir, new CacheEntry(attr, tickCount));
+                            events.add(new Event.DirectoryCreate(dir));
+                        } else {
+                            if (!e.attr().isDirectory()) {
+                                // file -> directory
+                                log.log(DEBUG, "DELETE : {0}", dir);
+                                log.log(DEBUG, "CREATE : {0}", dir);
+                                events.add(new Event.FileDelete(dir));
+                                events.add(new Event.DirectoryCreate(dir));
+                            }
+                            // entry in cache so update poll time
+                            e.update(attr, tickCount);
+                        }
                     }
                     return FileVisitResult.CONTINUE;
                 }
-
                 @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attr) {
                     if (pathMatchers.stream().anyMatch(m -> m.matches(file))) {
-                        entries.put(file, new FileEntry(file, attrs));
+                        CacheEntry e = entries.get(file);
+                        if (e == null) {
+                            // new file found
+                            log.log(DEBUG, "CREATE : {0}", file);
+                            entries.put(file, new CacheEntry(attr, tickCount));
+                            events.add(new Event.FileCreate(file));
+                        } else {
+                            if (e.attr().isDirectory()) {
+                                // directory -> file
+                                log.log(DEBUG, "DELETE : {0}", file);
+                                log.log(DEBUG, "CREATE : {0}", file);
+                                events.add(new Event.DirectoryDelete(file));
+                                events.add(new Event.FileCreate(file));
+                            } else {
+                                if (!(Objects.equals(e.attr().lastModifiedTime(), attr.lastModifiedTime()) &&
+                                    Objects.equals(e.attr().size(), attr.size()))) {
+                                    // file has changed
+                                    log.log(DEBUG, "MODIFY : {0}", file);
+                                    events.add(new Event.FileChange(file));
+                                }
+                            }
+                            // entry in cache so update poll time
+                            e.update(attr, tickCount);
+                        }
                     }
                     return FileVisitResult.CONTINUE;
                 }
             });
+
+            // iterate over cache to detect entries that have been deleted
+            Iterator<Map.Entry<Path, CacheEntry>> i = entries.entrySet().iterator();
+            while (i.hasNext()) {
+                Map.Entry<Path, CacheEntry> mapEntry = i.next();
+                CacheEntry entry = mapEntry.getValue();
+                if (entry.lastTickCount() != tickCount) {
+                    Path path = mapEntry.getKey();
+                    // remove from map and queue delete event
+                    i.remove();
+                    log.log(DEBUG, "DELETE : {0}", path);
+                    events.add(entry.attr().isDirectory()
+                        ? new Event.DirectoryDelete(path)
+                        : new Event.FileDelete(path));
+                }
+            }
+
+            log.log(DEBUG, "events: {0}", events.size());
+            return events;
+
         } catch (IOException e) {
+            reset();
             throw new RuntimeException(e);
         }
-        return entries;
     }
 
-    record FileEntry(Path path, BasicFileAttributes attr) { }
+    /**
+     * Get the initial entries in the directory.
+     * @param tickCount initial tick-count
+     * @return the initial entries
+     * @throws IOException io error
+     */
+    private Map<Path, CacheEntry> buildCacheEntries(long tickCount) throws IOException {
+        Map<Path, CacheEntry> map = new HashMap<>();
+        Files.walkFileTree(path, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attr) {
+                if (pathMatchers.stream().anyMatch(m -> m.matches(dir))) {
+                    map.put(dir, new CacheEntry(attr, tickCount));
+                }
+                return FileVisitResult.CONTINUE;
+            }
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attr) {
+                if (pathMatchers.stream().anyMatch(m -> m.matches(file))) {
+                    map.put(file, new CacheEntry(attr, tickCount));
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        log.log(DEBUG, "cacheEntry size: {0}", map.size());
+        return map;
+    }
+
+    /**
+     * Entry in cache to record file attributes and tick-count
+     */
+    private static class CacheEntry {
+        private BasicFileAttributes attr;
+        private long lastTickCount;
+        CacheEntry(BasicFileAttributes attr, long lastTickCount) {
+            this.attr = attr;
+            this.lastTickCount = lastTickCount;
+        }
+        long lastTickCount() { return lastTickCount; }
+        BasicFileAttributes attr() { return attr; }
+        void update(BasicFileAttributes attr, long tickCount) {
+            this.attr = attr;
+            this.lastTickCount = tickCount;
+        }
+    }
 
 }
