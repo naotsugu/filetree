@@ -25,17 +25,20 @@ import java.time.Duration;
 
 /**
  * The FileTreeWatch.
-
- * {@snippet lang=java :
- *     var watch = FileTreeWatch.run(path, System.out::println);
  *
- *     watch.close();
+ * {@snippet lang=java :
+ *  Path path = Path.of("dir/");
+ *  try (var ignored = FileTreeWatch.run(path, System.out::println)) {
+ *      IO.readln();
+ *  }
  * }
  *
  * {@snippet lang=java :
- *     var watch = FileTreeWatch.sync(source, target, "**\\*.java", "**\\*.html");
- *
- *     watch.close();
+ *  Path source = Path.of("src/main");
+ *  Path target = Path.of("src/dest");
+ *  try (var watch = FileTreeWatch.sync(source, target, "**\\/*.java", "**\\/*.html")) {
+ *      IO.readln();
+ *  }
  * }
  *
  * @author Naotsugu Kobayashi
