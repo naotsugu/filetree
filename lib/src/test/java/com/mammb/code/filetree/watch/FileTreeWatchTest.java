@@ -48,4 +48,14 @@ class FileTreeWatchTest {
             }
         }
     }
+
+    @Test
+    void syncs() throws Exception {
+        Path source = Path.of("src/main");
+        Path target = Path.of("src/dest");
+        try (var watch = FileTreeWatch.sync(source, target, "**/*.java", "**/*.html")) {
+            IO.readln();
+        }
+    }
+
 }
