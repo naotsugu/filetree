@@ -25,6 +25,19 @@ import java.time.Duration;
 
 /**
  * The FileTreeWatch.
+
+ * {@snippet lang=java :
+ *     var watch = FileTreeWatch.run(path, System.out::println);
+ *
+ *     watch.close();
+ * }
+ *
+ * {@snippet lang=java :
+ *     var watch = FileTreeWatch.sync(source, target, "**\\*.java", "**\\*.html");
+ *
+ *     watch.close();
+ * }
+ *
  * @author Naotsugu Kobayashi
  */
 public interface FileTreeWatch extends Closeable {
