@@ -96,7 +96,7 @@ public class SyncAction implements Listener {
             log.log(DEBUG, "delete : {0}", path);
 
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            log.log(WARNING, e.getMessage(), e);
         }
     }
 
@@ -111,7 +111,7 @@ public class SyncAction implements Listener {
                     StandardCopyOption.REPLACE_EXISTING);
             log.log(DEBUG, "copy : {0}", to);
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            log.log(WARNING, e.getMessage(), e);
         }
     }
 
@@ -134,7 +134,7 @@ public class SyncAction implements Listener {
             });
             log.log(DEBUG, "delete : {0}", path);
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            log.log(WARNING, e.getMessage(), e);
         }
     }
 
