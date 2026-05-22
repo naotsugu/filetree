@@ -82,6 +82,10 @@ public class FlatWatch {
 
                     Path path = dir.resolve((Path) event.context());
                     boolean directory = Files.isDirectory(path);
+                    if (!directory && (path.getFileName().toString().endsWith("~") ||
+                                       path.getFileName().toString().endsWith(".swp"))) {
+                        continue;
+                    }
 
                     if (kind == StandardWatchEventKinds.ENTRY_CREATE) {
                         log.log(DEBUG, "CREATE : {0}", path);

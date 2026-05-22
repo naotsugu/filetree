@@ -135,7 +135,9 @@ public class PollingWatch {
                 }
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attr) {
-                    if (pathMatchers.stream().anyMatch(m -> m.matches(file))) {
+                    if (!(path.getFileName().toString().endsWith("~") ||
+                          path.getFileName().toString().endsWith(".swp")
+                         ) && pathMatchers.stream().anyMatch(m -> m.matches(file))) {
                         CacheEntry e = entries.get(file);
                         if (e == null) {
                             // new file found
@@ -208,7 +210,9 @@ public class PollingWatch {
             }
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attr) {
-                if (pathMatchers.stream().anyMatch(m -> m.matches(file))) {
+                if (!(path.getFileName().toString().endsWith("~") ||
+                      path.getFileName().toString().endsWith(".swp")
+                     ) && pathMatchers.stream().anyMatch(m -> m.matches(file))) {
                     map.put(file, new CacheEntry(attr, tickCount));
                 }
                 return FileVisitResult.CONTINUE;

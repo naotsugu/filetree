@@ -17,10 +17,6 @@ package com.mammb.code.filetree;
 
 import com.mammb.code.filetree.watch.Event;
 import com.mammb.code.filetree.watch.FileTreeWatch;
-import com.mammb.code.filetree.watch.impl.FlatWatch;
-import com.mammb.code.filetree.watch.impl.PollingWatch;
-import com.mammb.code.filetree.watch.impl.RecursiveWatch;
-import com.mammb.code.filetree.watch.impl.SyncAction;
 import java.nio.file.Path;
 import java.time.Duration;
 
